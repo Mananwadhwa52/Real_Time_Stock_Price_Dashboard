@@ -1,0 +1,132 @@
+import tkinter as tk
+from tkinter import ttk, messagebox
+
+import yfinance as yf
+import pandas as pd
+import matplotlib
+matplotlib.use("TkAgg")
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
+from matplotlib.figure import Figure
+
+def format_ticker_for_market(ticker: str, market: str = "US") -> str:
+    ticker = ticker.strip().upper()
+    if market == "NSE":
+        if not ticker.endswith(".NS"):
+            ticker = ticker + ".NS"
+    return ticker
+
+def fetch_data(ticker: str, period: str = "1y", interval: str = "1d", market: str = "US") -> pd.DataFrame:
+    formatted = format_ticker_for_market(ticker, market)
+    try:
+        df = yf.download(formatted, period=period, interval=interval, auto_adjust=True)
+    except Exception as e:
+        print("Error fetching data:", e)
+        return pd.DataFrame()
+    return df
+
+def compute_moving_averages(df: pd.DataFrame, windows: list[int]) -> pd.DataFrame:
+    for w in windows:
+        col = f"MA_{w}"
+        df[col] = df["Close"].rolling(window=w).mean()
+    return df
+
+class StockApp(tk.Tk):
+    def __init__(self):
+        super().__init__()
+        self.title("Stock Tracker GUI")
+        self.geometry("900x600")
+
+        # Input frame
+        input_frame = ttk.Frame(self)
+        input_frame.pack(side=tk.TOP, fill=tk.X, padx=10, pady=5)
+
+        ttk.Label(input_frame, text="Ticker:").grid(row=0, column=0, padx=5, pady=2)
+        self.ticker_var = tk.StringVar()
+        ttk.Entry(input_frame, textvariable=self.ticker_var, width=10).grid(row=0, column=1)
+
+        ttk.Label(input_frame, text="Market:").grid(row=0, column=2, padx=5, pady=2)
+        self.market_var = tk.StringVar(value="US")
+        market_combo = ttk.Combobox(input_frame, textvariable=self.market_var, values=["US","NSE"], width=5)
+        market_combo.grid(row=0, column=3)
+
+        ttk.Label(input_frame, text="Period:").grid(row=0, column=4, padx=5, pady=2)
+        self.period_var = tk.StringVar(value="1y")
+        ttk.Entry(input_frame, textvariable=self.period_var, width=6).grid(row=0, column=5)
+
+        ttk.Button(input_frame, text="Load", command=self.load_data).grid(row=0, column=6, padx=10)
+
+        # Frame for graph
+        graph_frame = ttk.Frame(self)
+        graph_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=10, pady=5)
+
+        self.figure = Figure(figsize=(7,4), dpi=100)
+        self.ax = self.figure.add_subplot(111)
+        self.canvas = FigureCanvasTkAgg(self.figure, master=graph_frame)
+        self.canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+        self.toolbar = NavigationToolbar2Tk(self.canvas, graph_frame)
+        self.toolbar.update()
+        self.canvas._tkcanvas.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+
+        # Frame for values
+        val_frame = ttk.Frame(self)
+        val_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=10, pady=5)
+
+        self.label_close = ttk.Label(val_frame, text="Close: —")
+        self.label_close.pack(side=tk.LEFT, padx=10)
+        self.label_ma20 = ttk.Label(val_frame, text="MA20: —")
+        self.label_ma20.pack(side=tk.LEFT, padx=10)
+        self.label_ma50 = ttk.Label(val_frame, text="MA50: —")
+        self.label_ma50.pack(side=tk.LEFT, padx=10)
+        self.label_ma100 = ttk.Label(val_frame, text="MA100: —")
+        self.label_ma100.pack(side=tk.LEFT, padx=10)
+
+    def load_data(self):
+        ticker = self.ticker_var.get().strip()
+        market = self.market_var.get().strip().upper()
+        period = self.period_var.get().strip() or "1y"
+
+        if not ticker:
+            messagebox.showwarning("Input Error", "Ticker cannot be empty.")
+            return
+
+        df = fetch_data(ticker, period=period, market=market)
+        if df.empty:
+            messagebox.showerror("Data Error", "No data found for that ticker/market.")
+            return
+
+        # compute moving averages
+        ma_windows = [20, 50, 100]
+        df = compute_moving_averages(df, ma_windows)
+
+        # Plot
+        self.ax.clear()
+        self.ax.plot(df.index, df["Close"], label="Close", color="blue")
+        for w in ma_windows:
+            col = f"MA_{w}"
+            if col in df.columns:
+                self.ax.plot(df.index, df[col], label=f"MA{w}", linestyle="--")
+        self.ax.set_title(f"{ticker} ({market}) — Close + MAs")
+        self.ax.set_xlabel("Date")
+        self.ax.set_ylabel("Price")
+        self.ax.legend()
+        self.ax.grid(True)
+        self.canvas.draw()
+
+        # Display last values
+        latest = df.iloc[-1]
+        self.label_close.config(text=f"Close: {latest['Close']:.2f}")
+        for w in ma_windows:
+            col = f"MA_{w}"
+            val = latest.get(col, float("nan"))
+            # Format nicely; if nan, show “—”
+            text = f"{val:.2f}" if pd.notna(val) else "—"
+            if w == 20:
+                self.label_ma20.config(text=f"MA20: {text}")
+            elif w == 50:
+                self.label_ma50.config(text=f"MA50: {text}")
+            elif w == 100:
+                self.label_ma100.config(text=f"MA100: {text}")
+
+if __name__ == "__main__":
+    app = StockApp()
+    app.mainloop()
